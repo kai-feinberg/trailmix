@@ -7,6 +7,7 @@ import {TrailMix} from "../../src/TrailMixV1.sol";
 import {HelperConfig} from "../../script/HelperConfig.s.sol";
 import {Test, console} from "forge-std/Test.sol";
 import {StdCheats} from "forge-std/StdCheats.sol";
+import {stdError} from "forge-std/StdError.sol";
 import {MockERC20} from "../mock/MockERC20.sol";
 import {MockV3Aggregator} from "../mock/MockV3Aggregator.sol";
 import {MockISwapRouter} from "../mock/MockISwapRouter.sol";
@@ -35,11 +36,14 @@ contract FundMeTest is StdCheats, Test {
 
     address public constant USER = address(1);
 
+    address public TRAILMIX_ADDRESS;
+
     function setUp() external {
         DeployTrailMix deployer = new DeployTrailMix();
         (trailMix, helperConfig) = deployer.run();
         vm.deal(USER, STARTING_USER_BALANCE);
         (erc20Token, stablecoin, priceFeed, router) = helperConfig.activeNetworkConfig();
+        TRAILMIX_ADDRESS = address(trailMix);
     }
 
     function testPriceFeedSetCorrectly() public {
@@ -85,6 +89,36 @@ contract FundMeTest is StdCheats, Test {
         assertEq(tsl.s_totalTokenAmount, depositAmount, "TSL total token amount mismatch");
         assertEq(tsl.s_priceThreshold, tslThreshold, "TSL price threshold mismatch");
     }
+
+    function testDepositWithZeroAmount() public {
+        // Arrange
+        uint256 depositAmount = 0;  // Zero deposit amount
+        uint256 tslThreshold = 10;  // Example threshold value
+
+        // Act & Assert
+        vm.expectRevert();
+        trailMix.deposit(depositAmount, tslThreshold);
+    }
+
+    function testDepositWithoutApproval() public {
+        // Arrange: Define deposit amount and tslThreshold
+        uint256 depositAmount = 1 ether;
+        uint256 tslThreshold = 10;  // Example threshold value
+
+        // Arrange: Set up user's ERC20 balance without approving TrailMix contract
+        MockERC20 erc20 = MockERC20(erc20Token);
+        erc20.mint(USER, depositAmount);
+
+        vm.startPrank(USER);
+        // Note: No ERC20 approval is given here
+
+        // Act & Assert: Expect the deposit to fail due to lack of approval
+        vm.expectRevert();  // ERC20 standard revert message for insufficient allowance
+        trailMix.deposit(depositAmount, tslThreshold);
+
+        vm.stopPrank();
+    }
+
 
     // function testFundFailsWithoutEnoughETH() public {
     //     vm.expectRevert();
