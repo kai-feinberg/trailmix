@@ -75,71 +75,47 @@ contract TrailMix is AutomationCompatibleInterface {
      * @param tslThreshold The desired threshold for the TSL
      **/
     function deposit(uint256 amount, uint256 tslThreshold) external {
-        // Transfer ERC20 tokens from user to contract
-        // Check if the amount is positive
         if (amount <= 0) {
             revert InvalidAmount();
         }
 
-        // Attempt to transfer ERC20 tokens from user to contract
-        bool transferSuccess = IERC20(s_erc20Token).transferFrom(
-            msg.sender,
-            address(this),
-            amount
-        );
+        bool transferSuccess = IERC20(s_erc20Token).transferFrom(msg.sender, address(this), amount);
         if (!transferSuccess) {
             revert TransferFailed();
         }
 
-        // Update user's ERC20 balance
         UserData storage user = s_users[msg.sender];
         user.s_erc20Balance += amount;
 
-        // Tolerance range for TSL grouping (e.g., 0.5% tolerance)
-        uint256 tolerance = tslThreshold / 200; // 0.5% of the threshold
-
-        // Check for existing TSL within the tolerance range
-        uint256 tslId;
-        bool tslExists = false;
-        for (uint256 i = 0; i < s_activeTSLIds.length; i++) {
-            if (
-                s_trailingStopLosses[s_activeTSLIds[i]].s_priceThreshold <=
-                tslThreshold + tolerance &&
-                s_trailingStopLosses[s_activeTSLIds[i]].s_priceThreshold >=
-                tslThreshold - tolerance
-            ) {
-                tslId = s_activeTSLIds[i];
-                tslExists = true;
-                break;
-            }
-        }
-
-        // Create or update the TSL
-        if (tslExists) {
-            // Add user to existing TSL
+        // Check if user has an active TSL then add funds to it
+        if (user.s_activeTSLId != 0) {
+            // Add funds to existing TSL
+            uint256 tslId = user.s_activeTSLId;
             TrailingStopLoss storage tsl = s_trailingStopLosses[tslId];
             tsl.s_totalTokenAmount += amount;
-            tsl.s_participants.push(msg.sender);
-            user.s_activeTSLId = tslId;
-            user.s_tslTokenAmount += amount;
+            user.s_tslTokenAmount += amount; // Update user's TSL token amount
             emit TSLUpdated(tslId, tsl.s_totalTokenAmount);
         } else {
             // Create new TSL
-            tslId = s_nextTSLId++;
-            TrailingStopLoss storage newTSL = s_trailingStopLosses[tslId];
-            newTSL.s_priceThreshold = tslThreshold;
-            newTSL.s_totalTokenAmount = amount;
-            newTSL.s_participants.push(msg.sender);
-            s_activeTSLIds.push(tslId);
-            user.s_activeTSLId = tslId;
-            user.s_tslTokenAmount = amount;
-            emit TSLCreated(tslId, tslThreshold);
+            createNewTSL(amount, tslThreshold, msg.sender);
         }
 
-        // Emit deposit event
-        emit Deposit(msg.sender, amount, tslId);
+        emit Deposit(msg.sender, amount, user.s_activeTSLId);
     }
 
+    function createNewTSL(uint256 amount, uint256 tslThreshold, address userAddress) private {
+        uint256 tslId = s_nextTSLId++;
+        TrailingStopLoss storage newTSL = s_trailingStopLosses[tslId];
+        newTSL.s_priceThreshold = tslThreshold;
+        newTSL.s_totalTokenAmount = amount;
+        newTSL.s_participants.push(userAddress);
+        s_activeTSLIds.push(tslId);
+
+        s_users[userAddress].s_activeTSLId = tslId;
+        s_users[userAddress].s_tslTokenAmount = amount;
+
+        emit TSLCreated(tslId, tslThreshold);
+    }
 
     function updatePriceThreshold(uint256 tslId, uint256 newThreshold) private {
         if(s_trailingStopLosses[tslId].s_priceThreshold == 0){

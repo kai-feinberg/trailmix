@@ -88,6 +88,8 @@ contract FundMeTest is StdCheats, Test {
         TrailMix.TrailingStopLoss memory tsl = trailMix.getTSLDetails(userTSLId);
         assertEq(tsl.s_totalTokenAmount, depositAmount, "TSL total token amount mismatch");
         assertEq(tsl.s_priceThreshold, tslThreshold, "TSL price threshold mismatch");
+        assertEq(tsl.s_participants[0], USER, "TSL participant mismatch");
+        assertEq(tsl.s_participants.length, 1, "TSL participant length mismatch");
     }
 
     function testDepositWithZeroAmount() public {
