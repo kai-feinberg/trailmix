@@ -53,13 +53,15 @@ contract TrailMix is AutomationCompatibleInterface {
     constructor(
         address _erc20Token,
         address _stablecoin,
-        address _uniswapRouter,
-        address _priceFeed
+        address _priceFeed,
+        address _uniswapRouter
+
     ) {
         s_erc20Token = _erc20Token;
         s_stablecoin = _stablecoin;
-        s_uniswapRouter = ISwapRouter(_uniswapRouter);
         s_priceFeed = AggregatorV3Interface(_priceFeed);
+        s_uniswapRouter = ISwapRouter(_uniswapRouter);
+
     }
 
     // ... rest of the functions ...
@@ -146,4 +148,8 @@ contract TrailMix is AutomationCompatibleInterface {
     ) external override returns (bool upkeepNeeded, bytes memory performData) {}
 
     function performUpkeep(bytes calldata performData) external override {}
+
+    function getPriceFeed() public view returns (AggregatorV3Interface) {
+        return s_priceFeed;
+    }
 }
