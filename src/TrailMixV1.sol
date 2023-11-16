@@ -149,7 +149,44 @@ contract TrailMix is AutomationCompatibleInterface {
 
     function performUpkeep(bytes calldata performData) external override {}
 
+
+    //VIEW ONLY FUNCTIONS
     function getPriceFeed() public view returns (AggregatorV3Interface) {
         return s_priceFeed;
+    }
+
+    // View function to get user data
+    function getUserData(address userAddress) public view returns (UserData memory) {
+        return s_users[userAddress];
+    }
+
+    // View function to get TSL details
+    function getTSLDetails(uint256 tslId) public view returns (TrailingStopLoss memory) {
+        return s_trailingStopLosses[tslId];
+    }
+
+    // View function to get all active TSL IDs
+    function getActiveTSLIds() public view returns (uint256[] memory) {
+        return s_activeTSLIds;
+    }
+
+    // View function to get ERC20 token address
+    function getERC20TokenAddress() public view returns (address) {
+        return s_erc20Token;
+    }
+
+    // View function to get stablecoin address
+    function getStablecoinAddress() public view returns (address) {
+        return s_stablecoin;
+    }
+
+    // View function to get Uniswap router address
+    function getUniswapRouterAddress() public view returns (address) {
+        return address(s_uniswapRouter);
+    }
+
+    // View function to get Chainlink price feed address
+    function getPriceFeedAddress() public view returns (address) {
+        return address(s_priceFeed);
     }
 }
