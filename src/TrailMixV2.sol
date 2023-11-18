@@ -7,12 +7,13 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@uniswap/v3-periphery/contracts/libraries/TransferHelper.sol";
 import {ISwapRouter} from "@uniswap/v3-periphery/contracts/interfaces/ISwapRouter.sol";
 import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 error InvalidAmount(); // Error for when the deposit amount is not positive
 error TransferFailed(); // Error for when the token transfer fails
 
-contract TrailMix is AutomationCompatibleInterface {
-    address private immutable owner;
+contract TrailMix is AutomationCompatibleInterface, ReentrancyGuard {
+    address private immutable i_owner;
 
     address private s_erc20Token;
     address private s_stablecoin;
@@ -31,13 +32,14 @@ contract TrailMix is AutomationCompatibleInterface {
     event SwapExecuted(uint256 amountIn, uint256 amountOut);
 
     constructor(
+        address _owner,
         address _erc20Token,
         address _stablecoin,
         address _priceFeed,
         address _uniswapRouter,
         uint256 _trailAmount
     ) {
-        owner = msg.sender;
+        i_owner = _owner;
         s_erc20Token = _erc20Token;
         s_stablecoin = _stablecoin;
         s_priceFeed = AggregatorV3Interface(_priceFeed);
@@ -47,7 +49,7 @@ contract TrailMix is AutomationCompatibleInterface {
     }
 
     modifier onlyOwner() {
-        require(msg.sender == owner, "Not the owner");
+        require(msg.sender == i_owner, "Not the owner");
         _;
     }
 
@@ -66,11 +68,10 @@ contract TrailMix is AutomationCompatibleInterface {
         }
 
         s_erc20Balance += amount;
-        s_isTSLActive = true; // Activate TSL when deposit is made
 
         if (!s_isTSLActive) {
             // If TSL is not active, set the threshold and activate TSL
-            s_tslThreshold = tslThreshold;
+            s_tslThreshold = (tslThreshold * (100 - s_trailAmount)) / 100;
             s_isTSLActive = true;
             emit TSLUpdated(tslThreshold);
         }
@@ -88,19 +89,27 @@ contract TrailMix is AutomationCompatibleInterface {
                 revert InvalidAmount();
             }
             s_stablecoinBalance = 0;
-            TransferHelper.safeTransfer(s_stablecoin, owner, withdrawalAmount);
+            TransferHelper.safeTransfer(
+                s_stablecoin,
+                i_owner,
+                withdrawalAmount
+            );
         } else {
-            // If TSL is not active, user withdraws their ERC20 tokens
+            // If TSL is active, user withdraws their ERC20 tokens
             withdrawalAmount = s_erc20Balance;
             if (withdrawalAmount <= 0) {
                 revert InvalidAmount();
             }
             s_erc20Balance = 0;
-            TransferHelper.safeTransfer(s_erc20Token, owner, withdrawalAmount);
+            TransferHelper.safeTransfer(
+                s_erc20Token,
+                i_owner,
+                withdrawalAmount
+            );
             s_isTSLActive = false; // Deactivate TSL when withdrawal is made
         }
 
-        emit Withdraw(owner, withdrawalAmount);
+        emit Withdraw(i_owner, withdrawalAmount);
     }
 
     function updateTSLThreshold(uint256 newThreshold) private {
@@ -120,12 +129,12 @@ contract TrailMix is AutomationCompatibleInterface {
         return uint256(price) * (10 ** (18 - decimals)); //standardizes price to 18 decimals
     }
 
-    function swapToStablecoin(uint256 amount) private {
+    function swapToStablecoin(uint256 amount) private nonReentrant {
         //swap ERC20 tokens for stablecoin on uniswap
         //need to approve uniswap to spend ERC20 tokens
         uint256 currentPrice = getLatestPrice();
 
-        uint256 minAmoutOut = (amount * currentPrice * 99) / 100; //98% of the current price
+        uint256 minAmoutOut = (amount * currentPrice * 98) / 100; //98% of the current price
 
         IERC20(s_erc20Token).approve(address(s_uniswapRouter), amount);
         TransferHelper.safeTransferFrom(
@@ -135,12 +144,13 @@ contract TrailMix is AutomationCompatibleInterface {
             amount
         );
 
+        s_erc20Balance -= amount;
         ISwapRouter.ExactInputSingleParams memory params = ISwapRouter
             .ExactInputSingleParams({
                 tokenIn: s_erc20Token,
                 tokenOut: s_stablecoin,
                 fee: 3000,
-                recipient: owner,
+                recipient: address(this),
                 deadline: block.timestamp,
                 amountIn: amount,
                 amountOutMinimum: minAmoutOut,
@@ -150,7 +160,7 @@ contract TrailMix is AutomationCompatibleInterface {
 
         uint256 amountRecieved = IERC20(s_stablecoin).balanceOf(address(this));
         s_stablecoinBalance += amountRecieved;
-        s_erc20Balance -= amount;
+
         emit SwapExecuted(amount, amountRecieved);
     }
 
@@ -162,40 +172,47 @@ contract TrailMix is AutomationCompatibleInterface {
         override
         returns (bool upkeepNeeded, bytes memory performData)
     {
+        if (!s_isTSLActive) {
+            upkeepNeeded = false;
+            return (upkeepNeeded, performData);
+        }
         // Implement logic to check if TSL conditions are met
         uint256 currentPrice = getLatestPrice();
         bool triggerSell = false;
         bool updateThreshold = false;
+        uint256 newThreshold = 0;
 
+        //calculates the actual price based on the threshold
+        uint256 oldCurrentPrice = s_tslThreshold * 100 / (100-s_trailAmount);
+
+        //determines the price that is 1% higher than the old stored price
+        uint256 onePercentHigher = oldCurrentPrice*101/100;
         //if new price is less than the current threshold then trigger TSL
         if (currentPrice < s_tslThreshold) {
             //trigger TSL
             triggerSell = true;
         }
-        //otherwise update if price has moved up 1% from the last threshold
-        else if (currentPrice > (s_tslThreshold * 101) / 100) {
+        
+        else if (currentPrice > onePercentHigher) {
             updateThreshold = true;
+            newThreshold = currentPrice * (100 - s_trailAmount) / 100;
         }
 
-        performData = abi.encode(triggerSell, updateThreshold);
+        performData = abi.encode(triggerSell, updateThreshold, newThreshold);
         upkeepNeeded = triggerSell || updateThreshold;
         return (upkeepNeeded, performData);
     }
 
     function performUpkeep(bytes calldata performData) external override {
         // Implement logic to perform TSL (e.g., swap to stablecoin) when conditions are met
-        (bool triggerSell, bool updateThreshold) = abi.decode(
-            performData,
-            (bool, bool)
-        );
+        (bool triggerSell, bool updateThreshold, uint256 newThreshold) = abi
+            .decode(performData, (bool, bool, uint256));
         if (triggerSell) {
             swapToStablecoin(s_erc20Balance);
             //call trigger function to sell on uniswap
         } else if (updateThreshold) {
             //call updateThreshold function to update the threshold
-            updateTSLThreshold(
-                (getLatestPrice() * (100 - s_trailAmount)) / 100
-            );
+            updateTSLThreshold(newThreshold);
         }
     }
 
@@ -230,5 +247,13 @@ contract TrailMix is AutomationCompatibleInterface {
     // View function to get Chainlink price feed address
     function getPriceFeedAddress() public view returns (address) {
         return address(s_priceFeed);
+    }
+
+    function getTrailAmount() public view returns (uint256) {
+        return s_trailAmount;
+    }
+
+    function getOwner() public view returns (address) {
+        return i_owner;
     }
 }
