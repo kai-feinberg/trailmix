@@ -37,6 +37,7 @@ contract TrailMixTest is StdCheats, Test {
     address public constant USER = address(1);
 
     address public TRAILMIX_ADDRESS;
+    event Withdraw(address indexed user, uint256 amount);
 
     function setUp() external {
         DeployTrailMix deployer = new DeployTrailMix();
@@ -149,9 +150,9 @@ contract TrailMixTest is StdCheats, Test {
         trailMix.deposit(depositAmount, tslThreshold);
     }
 
-    modifier activeTSL {
+    modifier activeTSL() {
         uint256 depositAmount = 1 ether;
-        uint256 tslThreshold = 100*10**18; // Example threshold
+        uint256 tslThreshold = 100 * 10 ** 18; // Example threshold
         // Arrange: Set up user's ERC20 balance and approve contract to spend tokens
         vm.prank(USER);
         MockERC20(erc20Token).mint(USER, depositAmount);
@@ -164,7 +165,7 @@ contract TrailMixTest is StdCheats, Test {
         _;
     }
 
-    function testGetLatestPrice() public activeTSL{
+    function testGetLatestPrice() public activeTSL {
         // Arrange: Set expected price in mock aggregator
         int256 EXPECTED_PRICE = 100;
         MockV3Aggregator(priceFeed).updateAnswer(EXPECTED_PRICE);
@@ -183,7 +184,7 @@ contract TrailMixTest is StdCheats, Test {
         );
     }
 
-    function testUpdateTSLThresholdIndirectly() public activeTSL{
+    function testUpdateTSLThresholdIndirectly() public activeTSL {
         // Arrange: Set initial conditions including current TSL threshold and ERC20 balance
         uint256 initialTSLThreshold = 100;
         uint256 depositAmount = 1 ether;
@@ -196,83 +197,117 @@ contract TrailMixTest is StdCheats, Test {
 
         int256 EXPECTED_PRICE = 150; // Non-scaled price
         uint8 decimals = MockV3Aggregator(priceFeed).decimals();
-        MockV3Aggregator(priceFeed).updateAnswer(EXPECTED_PRICE * int256(10**decimals));
-
+        MockV3Aggregator(priceFeed).updateAnswer(
+            EXPECTED_PRICE * int256(10 ** decimals)
+        );
 
         // Act: Call performUpkeep with data to trigger threshold update
-        (, bytes memory performData) = trailMix.checkUpkeep(
-            ""
-        ); // Example data
+        (, bytes memory performData) = trailMix.checkUpkeep(""); // Example data
         trailMix.performUpkeep(performData);
-
 
         // Assert: Verify that the TSL threshold is updated as expected
         uint256 newThreshold = trailMix.getTSLThreshold();
 
         //uses our getLatestPrice function to fetch latest price from oracle and standardize decimals
-        uint256 expectedNewThreshold = (trailMix.getLatestPrice() * (100 - trailMix.getTrailAmount())) / 100; 
+        uint256 expectedNewThreshold = (trailMix.getLatestPrice() *
+            (100 - trailMix.getTrailAmount())) / 100;
         assertEq(
             newThreshold,
             expectedNewThreshold,
             "TSL threshold was not updated correctly"
         );
-    
     }
-    
+
     function testCheckUpkeepNoUpkeepNeeded() public activeTSL {
         // Arrange: Set the price within the threshold range but not triggering an update
         uint256 tholdPrice = trailMix.getTSLThreshold();
-        MockV3Aggregator mockPriceFeed = MockV3Aggregator(trailMix.getPriceFeedAddress());
+        MockV3Aggregator mockPriceFeed = MockV3Aggregator(
+            trailMix.getPriceFeedAddress()
+        );
 
         console.log(tholdPrice);
-        mockPriceFeed.updateAnswer(int256(tholdPrice*105/(100*10 ** (18 - MockV3Aggregator(priceFeed).decimals())))); //price is 5% above threshold
+        mockPriceFeed.updateAnswer(
+            int256(
+                (tholdPrice * 105) /
+                    (100 * 10 ** (18 - MockV3Aggregator(priceFeed).decimals()))
+            )
+        ); //price is 5% above threshold
 
         // Act: Call checkUpkeep
-        (bool upkeepNeeded, bytes memory performData) = trailMix.checkUpkeep("");
-        (bool triggerSell, bool updateThreshold, uint256 newThreshold) = abi.decode(performData, (bool, bool, uint256));
-        console.log(newThreshold );
+        (bool upkeepNeeded, bytes memory performData) = trailMix.checkUpkeep(
+            ""
+        );
+        (bool triggerSell, bool updateThreshold, uint256 newThreshold) = abi
+            .decode(performData, (bool, bool, uint256));
+        console.log(newThreshold);
         console.log(triggerSell);
         console.log(updateThreshold);
         // Assert: No upkeep needed
         assertFalse(upkeepNeeded, "Upkeep should not be needed");
     }
 
-    function testCheckUpkeepForSelling() public activeTSL{
+    function testCheckUpkeepForSelling() public activeTSL {
         // Arrange: Set the price below the TSL threshold
         uint256 currentPrice = trailMix.getTSLThreshold();
-        MockV3Aggregator mockPriceFeed = MockV3Aggregator(trailMix.getPriceFeedAddress());
-        mockPriceFeed.updateAnswer(int256(currentPrice*99/(100*10**(18 - MockV3Aggregator(priceFeed).decimals()))));
+        MockV3Aggregator mockPriceFeed = MockV3Aggregator(
+            trailMix.getPriceFeedAddress()
+        );
+        mockPriceFeed.updateAnswer(
+            int256(
+                (currentPrice * 99) /
+                    (100 * 10 ** (18 - MockV3Aggregator(priceFeed).decimals()))
+            )
+        );
 
         // Act: Call checkUpkeep
-        (bool upkeepNeeded, bytes memory performData) = trailMix.checkUpkeep("");
+        (bool upkeepNeeded, bytes memory performData) = trailMix.checkUpkeep(
+            ""
+        );
 
         // Assert: Upkeep needed for selling
         assertTrue(upkeepNeeded, "Upkeep should be needed for selling");
-        (bool triggerSell, bool updateThreshold,) = abi.decode(performData, (bool, bool, uint256));
+        (bool triggerSell, bool updateThreshold, ) = abi.decode(
+            performData,
+            (bool, bool, uint256)
+        );
         assertTrue(triggerSell, "Trigger sell should be true");
         assertFalse(updateThreshold, "Update threshold should be false");
     }
 
-    function testCheckUpkeepForThresholdUpdate() public activeTSL{ 
+    function testCheckUpkeepForThresholdUpdate() public activeTSL {
         // Arrange: Set the price above the TSL threshold by the trail amount
-        uint256 currentPrice = (trailMix.getTSLThreshold() * (101+trailMix.getTrailAmount())/ 100); //sets price 1% above the required amount to update the threshold.
+        uint256 currentPrice = ((trailMix.getTSLThreshold() *
+            (101 + trailMix.getTrailAmount())) / 100); //sets price 1% above the required amount to update the threshold.
         console.log(currentPrice);
         int256 currentPriceInt = int256(currentPrice);
-        MockV3Aggregator mockPriceFeed = MockV3Aggregator(trailMix.getPriceFeedAddress());
+        MockV3Aggregator mockPriceFeed = MockV3Aggregator(
+            trailMix.getPriceFeedAddress()
+        );
         mockPriceFeed.updateAnswer(currentPriceInt);
 
         // Act: Call checkUpkeep
-        (bool upkeepNeeded, bytes memory performData) = trailMix.checkUpkeep("");
+        (bool upkeepNeeded, bytes memory performData) = trailMix.checkUpkeep(
+            ""
+        );
 
         // Assert: Upkeep needed for threshold update
-        assertTrue(upkeepNeeded, "Upkeep should be needed for threshold update");
-        (bool triggerSell, bool updateThreshold,uint256 newThreshold) = abi.decode(performData, (bool, bool, uint256));
+        assertTrue(
+            upkeepNeeded,
+            "Upkeep should be needed for threshold update"
+        );
+        (bool triggerSell, bool updateThreshold, uint256 newThreshold) = abi
+            .decode(performData, (bool, bool, uint256));
         assertFalse(triggerSell, "Trigger sell should be false");
         assertTrue(updateThreshold, "Update threshold should be true");
-        assertEq(newThreshold, (trailMix.getLatestPrice() * (100 - trailMix.getTrailAmount()) / 100), "New threshold not correct");
+        assertEq(
+            newThreshold,
+            ((trailMix.getLatestPrice() * (100 - trailMix.getTrailAmount())) /
+                100),
+            "New threshold not correct"
+        );
     }
 
-    function testCheckUpkeepWithNoActiveTSL() public{
+    function testCheckUpkeepWithNoActiveTSL() public {
         // Arrange: Ensure no active TSL
         // You may need to manipulate the contract state to reflect no active TSL
 
@@ -280,7 +315,105 @@ contract TrailMixTest is StdCheats, Test {
         (bool upkeepNeeded, ) = trailMix.checkUpkeep("");
 
         // Assert: No upkeep needed
-        assertFalse(upkeepNeeded, "Upkeep should not be needed when no TSL is active");
+        assertFalse(
+            upkeepNeeded,
+            "Upkeep should not be needed when no TSL is active"
+        );
     }
 
+    //WITHDRAWAL TESTS
+    function testWithdrawERC20Tokens() public activeTSL {
+        uint256 depositAmount = 1 ether;
+        vm.startPrank(USER);
+        trailMix.withdraw();
+        vm.stopPrank();
+        assertEq(
+            MockERC20(trailMix.getERC20TokenAddress()).balanceOf(
+                USER
+            ),
+            depositAmount,
+            "ERC20 balance mismatch after withdrawal"
+        );
+        assertEq(
+            trailMix.getERC20Balance(),
+            0,
+            "Contract ERC20 balance not zero after withdrawal"
+        );
+        assertFalse(
+            trailMix.isTSLActive(),
+            "TSL should be inactive after ERC20 withdrawal"
+        );
+    }
+
+    // function testWithdrawStablecoins() public {
+    //     //trigger TSL via uniswap mocks
+    //     vm.startPrank(USER);
+    //     trailMix.withdraw();
+    //     vm.stopPrank();
+
+    //     assertEq(
+    //         MockERC20(trailMix.getStablecoinAddress()).balanceOf(
+    //             USER
+    //         ),
+    //         depositAmount,
+    //         "Stablecoin balance mismatch after withdrawal"
+    //     );
+    //     assertEq(
+    //         MockERC20(trailMix.getStablecoinAddress()).balanceOf(
+    //             TRAILMIX_ADDRESS
+    //         ),
+    //         0,
+    //         "Contract stablecoin balance not zero after withdrawal"
+    //     );
+    // }
+
+    function testWithdrawalByNonOwner() public activeTSL {
+        address nonOwner = address(2);
+        vm.startPrank(nonOwner);
+        vm.expectRevert("Not the owner");
+        trailMix.withdraw();
+        vm.stopPrank();
+    }
+
+    function testWithdrawWithInsufficientBalance() public activeTSL{
+
+        console.log(trailMix.isTSLActive());
+        vm.startPrank(USER);
+        trailMix.withdraw(); // First withdrawal to empty the balance
+        vm.expectRevert();
+        trailMix.withdraw(); // Attempting second withdrawal
+        vm.stopPrank();
+    }
+
+    function testContractStatePostWithdrawal() public activeTSL {
+        vm.startPrank(USER);
+        trailMix.withdraw();
+        vm.stopPrank();
+
+        assertEq(
+            trailMix.getERC20Balance(),
+            0,
+            "Contract ERC20 balance should be zero after withdrawal"
+        );
+        assertEq(
+            MockERC20(trailMix.getStablecoinAddress()).balanceOf(
+                TRAILMIX_ADDRESS
+            ),
+            0,
+            "Contract stablecoin balance should be zero after withdrawal"
+        );
+        assertFalse(
+            trailMix.isTSLActive(),
+            "TSL should be inactive after withdrawal"
+        );
+    }
+
+    function testEventEmissionOnWithdrawal() public activeTSL {
+        uint256 DEPOSIT_AMOUNT = 1 ether;
+        vm.startPrank(USER);
+        vm.expectEmit(true, true, false, true);
+        emit Withdraw(USER, DEPOSIT_AMOUNT);
+        trailMix.withdraw();
+        vm.stopPrank();
+    }
 }
